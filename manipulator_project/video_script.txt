@@ -1,0 +1,20 @@
+Hello — my name is Hamida Sajjad. This video demonstrates my PDE4431 CW2 manipulator simulation.
+
+(Show project folder / README)
+This project simulates a 4-DoF articulated manipulator with joint order: revolute, revolute, prismatic, revolute — abbreviated RRPR.
+
+I used DH-style reasoning: two planar links provide x-y reach, a prismatic joint sets the vertical height, and a small wrist links the end-effector.
+
+(Show code briefly)
+The robot class implements forward kinematics (for verification) and an inverse kinematics function that solves the 2-link planar IK, then sets the prismatic joint to reach the desired z.
+
+(Now run the demo)
+I will press each button on the left to instruct the robot to pick from the floor and place on three shelves.
+
+- Click Floor: the robot extends to the floor target.
+- Click Shelf 1: the prismatic joint raises the end-effector, and the arm moves to the first shelf at 0.4m.
+- Click Shelf 2: moves to the second shelf at 0.6m.
+- Click Shelf 3: moves to the highest shelf at 0.8m.
+
+(Discuss results)
+The program clamps unreachable positions and interpolates smoothly between poses. The code is on GitHub: [paste your repo link here]. Thank you.
