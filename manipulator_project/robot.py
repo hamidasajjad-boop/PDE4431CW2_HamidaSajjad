@@ -1,87 +1,123 @@
-# robot.py (corrected for exact wrist IK and origin at 0,0,0)
-
 import numpy as np
 
-class ArticulatedRRPR:
-    def __init__(self,
-                 a1=0.4,
-                 a2=0.3,
-                 a4=0.08,
-                 base_height=0.0,      # FIXED: Origin is now exactly at z = 0
-                 d3_min=0.0,
-                 d3_max=0.8):
 
-        self.a1 = a1
-        self.a2 = a2
-        self.a4 = a4
-        self.base_height = base_height
-        self.d3_min = d3_min
-        self.d3_max = d3_max
+class ArticulatedRRRP:
+    """
+    4-DOF SCARA-style articulated manipulator:
 
-        self.q1_min, self.q1_max = -np.pi, np.pi
-        self.q2_min, self.q2_max = -np.pi, np.pi
-        self.q4_min, self.q4_max = -np.pi, np.pi
+        q1: base rotation      (about Z, at top of column)
+        q2: shoulder rotation  (horizontal plane)
+        q3: elbow rotation     (horizontal plane)
+        q4: wrist vertical prismatic (short stroke)
 
+    Geometry:
+        Base frame at (0, 0, 0).
+        Vertical column of height z_base supports 3R planar arm.
+        q4 is a short vertical lift (10–20 cm), not a long rod.
+    """
+
+    def __init__(
+        self,
+        L1: float = 0.30,     # first link
+        L2: float = 0.25,     # second link
+        L3: float = 0.18,     # wrist link
+        z_base: float = 0.25, # arm height
+        z_min: float = -0.15,
+        z_max: float = 0.15,  # ±15 cm wrist lift
+    ):
+        self.L1 = L1
+        self.L2 = L2
+        self.L3 = L3
+        self.z_base = z_base
+        self.z_min = z_min
+        self.z_max = z_max
+
+    # --------------------------------------------------------------
+    # Forward Kinematics
+    # --------------------------------------------------------------
     def forward_kinematics(self, q):
-        theta1, theta2, d3, theta4 = q
+        q1, q2, q3, q4 = [float(v) for v in q]
 
-        x = (self.a1*np.cos(theta1)
-             + self.a2*np.cos(theta1+theta2)
-             + self.a4*np.cos(theta1+theta2+theta4))
-        y = (self.a1*np.sin(theta1)
-             + self.a2*np.sin(theta1+theta2)
-             + self.a4*np.sin(theta1+theta2+theta4))
+        # base on floor
+        p0 = np.array([0.0, 0.0, 0.0])
 
-        z = self.base_height + d3
-        phi = theta1 + theta2 + theta4
-        return np.array([x, y, z]), phi
+        # top of the column
+        p1 = np.array([0.0, 0.0, self.z_base])
 
-    def inverse_kinematics(self, target, phi_desired=0.0, elbow_up=False):
+        # planar angles
+        t1 = q1
+        t2 = q1 + q2
+        t3 = q1 + q2 + q3
+
+        # shoulder
+        p2 = p1 + np.array([
+            self.L1 * np.cos(t1),
+            self.L1 * np.sin(t1),
+            0.0
+        ])
+
+        # elbow
+        p3 = p2 + np.array([
+            self.L2 * np.cos(t2),
+            self.L2 * np.sin(t2),
+            0.0
+        ])
+
+        # wrist
+        wrist = p3 + np.array([
+            self.L3 * np.cos(t3),
+            self.L3 * np.sin(t3),
+            0.0
+        ])
+
+        # small prismatic lift only
+        q4_clamped = np.clip(q4, self.z_min, self.z_max)
+
+        p4 = wrist.copy()
+        p4[2] = self.z_base + q4_clamped
+
+        return np.vstack([p0, p1, p2, p3, p4])
+
+    # --------------------------------------------------------------
+    # Inverse Kinematics
+    # --------------------------------------------------------------
+    def inverse_kinematics(self, target):
         x, y, z = target
 
-        # ---------------------------------------------------
-        # 1) EXACT WRIST POSITION (critical fix)
-        # ---------------------------------------------------
-        Wx = x - self.a4*np.cos(phi_desired)
-        Wy = y - self.a4*np.sin(phi_desired)
+        # wrist lift
+        q4 = np.clip(z - self.z_base, self.z_min, self.z_max)
 
-        r = np.hypot(Wx, Wy)
+        # projection onto arm plane
+        phi = np.arctan2(y, x)
 
-        # Law of cosines for theta2
-        cos2 = (r**2 - self.a1**2 - self.a2**2) / (2*self.a1*self.a2)
-        cos2 = np.clip(cos2, -1, 1)   # clamp
+        # wrist XY position
+        xw = x - self.L3 * np.cos(phi)
+        yw = y - self.L3 * np.sin(phi)
 
-        sin2 = np.sqrt(1 - cos2**2)
-        if elbow_up:
-            sin2 = -sin2
+        L1, L2 = self.L1, self.L2
 
-        theta2 = np.arctan2(sin2, cos2)
+        r2 = xw**2 + yw**2
+        r = np.sqrt(r2)
+        max_r = L1 + L2 - 1e-6
 
-        # Theta1
-        k1 = self.a1 + self.a2*cos2
-        k2 = self.a2*sin2
+        # clamp
+        if r > max_r:
+            xw *= max_r / r
+            yw *= max_r / r
+            r = max_r
+            r2 = r * r
 
-        theta1 = np.arctan2(Wy, Wx) - np.arctan2(k2, k1)
+        # COSINE LAW
+        c2 = (r2 - L1**2 - L2**2) / (2 * L1 * L2)
+        c2 = np.clip(c2, -1, 1)
+        s2 = np.sqrt(1 - c2**2)
+        q2 = np.arctan2(s2, c2)
 
-        # Prismatic joint
-        d3 = z - self.base_height
-        d3 = np.clip(d3, self.d3_min, self.d3_max)
+        k1 = L1 + L2 * c2
+        k2 = L2 * s2
 
-        # Final wrist rotation
-        theta4 = phi_desired - (theta1 + theta2)
+        q1 = np.arctan2(yw, xw) - np.arctan2(k2, k1)
 
-        # Normalize
-        theta1 = self._wrap(theta1)
-        theta2 = self._wrap(theta2)
-        theta4 = self._wrap(theta4)
+        q3 = phi - q1 - q2
 
-        return np.array([theta1, theta2, d3, theta4])
-
-    def _wrap(self, a):
-        return (a + np.pi) % (2*np.pi) - np.pi
-
-    def reachable(self, target):
-        x, y, z = target
-        r = np.hypot(x, y)
-        max_r = self.a1 + self.a2 + self.a4
-        return r <= max_r and self.d3_min <= (z - self.base_height) <= self.d3_max
+        return np.array([q1, q2, q3, q4])

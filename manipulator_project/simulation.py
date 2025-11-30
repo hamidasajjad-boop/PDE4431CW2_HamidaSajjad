@@ -1,143 +1,308 @@
-# simulation.py
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
-from mpl_toolkits.mplot3d import Axes3D
-from robot import ArticulatedRRPR
-import time
 
-class Simulator:
-    def __init__(self, robot=None):
-        self.robot = robot if robot is not None else ArticulatedRRPR()
+from robot import ArticulatedRRRP
 
-        # default joint pose
-        self.q = np.array([0.0, 0.0, 0.0, 0.0])
 
-        # define targets: floor + 3 shelves (different elevations)
-        self.targets = {
-            'Floor': np.array([0.5, 0.0, 0.0]),
-            'Shelf 1': np.array([0.3, 0.3, 0.4]),
-            'Shelf 2': np.array([0.5, -0.2, 0.6]),
-            'Shelf 3': np.array([0.2, 0.4, 0.8]),
-        }
+class ManipulatorSimulation:
+    """
+    Articulated 4-DOF manipulator performing pick-and-place of
+    three objects from fixed floor positions onto a three-level shelf.
 
-        # create figure & axes
-        self.fig = plt.figure(figsize=(10,7))
-        self.ax = self.fig.add_subplot(111, projection='3d')
-        self.ax.set_box_aspect([1,1,0.8])
+    UI:
+        - Floor 1, Floor 2, Floor 3: run pick-&-place for that object
+        - Reset: go to Home pose
 
-        # UI buttons area
-        axcolor = 'lightgoldenrodyellow'
-        self.ax_floor = plt.axes([0.02, 0.85, 0.12, 0.06])
-        self.ax_s1 = plt.axes([0.02, 0.76, 0.12, 0.06])
-        self.ax_s2 = plt.axes([0.02, 0.67, 0.12, 0.06])
-        self.ax_s3 = plt.axes([0.02, 0.58, 0.12, 0.06])
+    Also shows a visible Home reference point.
+    """
 
-        self.btn_floor = Button(self.ax_floor, 'Floor')
-        self.btn_s1 = Button(self.ax_s1, 'Shelf 1')
-        self.btn_s2 = Button(self.ax_s2, 'Shelf 2')
-        self.btn_s3 = Button(self.ax_s3, 'Shelf 3')
+    def __init__(self):
+        # Robot model
+        self.robot = ArticulatedRRRP()
 
-        self.btn_floor.on_clicked(lambda event: self.move_to('Floor'))
-        self.btn_s1.on_clicked(lambda event: self.move_to('Shelf 1'))
-        self.btn_s2.on_clicked(lambda event: self.move_to('Shelf 2'))
-        self.btn_s3.on_clicked(lambda event: self.move_to('Shelf 3'))
+        # Home configuration (arm along +X, mid-height)
+        self.q_home = np.array([0.0, 0.0, 0.0, 0.35])
+        self.q_current = self.q_home.copy()
 
-        # initial plot
-        self.draw_scene()
-        plt.subplots_adjust(left=0.18, right=0.98, top=0.95, bottom=0.05)
+        # Fixed floor object positions (three levels along front arc)
+        self.floor_positions = np.array(
+            [
+                [0.35, -0.15, 0.02],  # Floor 1
+                [0.40,  0.00, 0.02],  # Floor 2
+                [0.35,  0.15, 0.02],  # Floor 3
+            ]
+        )
 
-    def draw_scene(self):
-        self.ax.cla()
-        # axis labels
-        self.ax.set_xlabel('X (m)')
-        self.ax.set_ylabel('Y (m)')
-        self.ax.set_zlabel('Z (m)')
-        self.ax.set_xlim(-0.8, 0.8)
-        self.ax.set_ylim(-0.8, 0.8)
-        self.ax.set_zlim(0, 1.2)
+        # --- Shelf geometry ---
+        # Put the shelf centered behind the objects in X,
+        # and push it up so its back edge touches the "wall" at y = 0.7.
+        self.shelf_x = 0.40          # roughly aligned with floor objects in X
+        self.shelf_y = 0.52          # front of shelf; back will be at 0.52 + depth (0.18) = 0.70
 
-        # draw shelves as rectangular planes for visualization
-        self._draw_shelves()
+        self.shelf_levels = np.array([0.25, 0.45, 0.65])  # Shelf 1,2,3 heights
 
-        # draw robot at current q
-        self._draw_robot(self.q)
+        # Matching target positions on shelf
+        self.shelf_positions = np.array(
+            [
+                [self.shelf_x, self.shelf_y, self.shelf_levels[0]],  # Shelf 1
+                [self.shelf_x, self.shelf_y, self.shelf_levels[1]],  # Shelf 2
+                [self.shelf_x, self.shelf_y, self.shelf_levels[2]],  # Shelf 3
+            ]
+        )
 
-        # draw target markers
-        for name, t in self.targets.items():
-            self.ax.scatter([t[0]], [t[1]], [t[2]], marker='o')
-            self.ax.text(t[0], t[1], t[2]+0.03, name, fontsize=8)
+        # Track whether each object has already been placed
+        self.object_done = [False, False, False]
 
-        self.fig.canvas.draw_idle()
+        # Matplotlib figure / axes
+        self.fig = plt.figure(figsize=(10, 7))
+        self.ax = self.fig.add_subplot(111, projection="3d")
+        self.ax.set_title("4-DOF Articulated Manipulator – Pick & Place", fontsize=14)
 
-    def _draw_shelves(self):
-        # simple shelf representation: at z=0.4, 0.6, 0.8
-        for z, x0 in [(0.4, 0.0), (0.6, 0.0), (0.8, 0.0)]:
-            # a small rectangular plane
-            xs = np.array([-0.6, 0.6, 0.6, -0.6])
-            ys = np.array([-0.2, -0.2, 0.6, 0.6])
-            zs = np.array([z, z, z, z])
-            self.ax.plot_trisurf(xs, ys, zs, alpha=0.06, shade=False)
+        self.ax.set_xlabel("X (m)")
+        self.ax.set_ylabel("Y (m)")
+        self.ax.set_zlabel("Z (m)")
+        self.ax.set_xlim(-0.7, 0.7)
+        self.ax.set_ylim(-0.5, 0.7)
+        self.ax.set_zlim(0.0, 0.9)
+        self.ax.view_init(elev=25, azim=40)
 
-    def _draw_robot(self, q):
-        # compute joint positions for stick figure
-        theta1, theta2, d3, theta4 = q
-        base = np.array([0.0, 0.0, 0.0])
-        p0 = base
+        # Environment: floor, shelf, objects, home reference
+        self._draw_floor()
+        self._draw_shelf()
+        self._create_objects()
+        self._draw_home_reference()
 
-        # joint1 position after link a1
-        p1 = p0 + np.array([self.robot.a1 * np.cos(theta1),
-                            self.robot.a1 * np.sin(theta1),
-                            0.0])
+        # Draw robot at home
+        joints = self.robot.forward_kinematics(self.q_current)
+        (self.robot_line,) = self.ax.plot(
+            joints[:, 0], joints[:, 1], joints[:, 2],
+            "-o", color="red", linewidth=2, markersize=6
+        )
 
-        # joint2 (after a2)
-        p2 = p1 + np.array([self.robot.a2 * np.cos(theta1 + theta2),
-                            self.robot.a2 * np.sin(theta1 + theta2),
-                            0.0])
+        # UI buttons: only 4
+        self._create_buttons()
 
-        # wrist (a4), and then prismatic contributes to z
-        p3 = p2 + np.array([self.robot.a4 * np.cos(theta1 + theta2 + theta4),
-                            self.robot.a4 * np.sin(theta1 + theta2 + theta4),
-                            d3])
+    # ------------------------------------------------------------------
+    # Environment drawing
+    # ------------------------------------------------------------------
+    def _draw_floor(self):
+        # Simple rectangular floor plane
+        x = np.linspace(-0.7, 0.7, 2)
+        y = np.linspace(-0.5, 0.5, 2)
+        xx, yy = np.meshgrid(x, y)
+        zz = np.zeros_like(xx)
+        self.ax.plot_surface(xx, yy, zz, color="lightgray", alpha=0.2)
 
-        # plot links
-        xs = [p0[0], p1[0], p2[0], p3[0]]
-        ys = [p0[1], p1[1], p2[1], p3[1]]
-        zs = [p0[2], p1[2], p2[2], p3[2]]
-        self.ax.plot(xs, ys, zs, '-o', linewidth=3, markersize=6)
+    def _draw_shelf(self):
+        """
+        Proper looking shelf:
+            - Two vertical posts
+            - Three horizontal shelves (plates) at given z levels
+        """
+        width = 0.35
+        depth = 0.18
 
-        # annotate joints
-        self.ax.text(p0[0], p0[1], p0[2]+0.02, 'Base', fontsize=8)
-        self.ax.text(p1[0], p1[1], p1[2]+0.02, 'J1_end', fontsize=8)
-        self.ax.text(p2[0], p2[1], p2[2]+0.02, 'J2_end', fontsize=8)
-        self.ax.text(p3[0], p3[1], p3[2]+0.02, 'EE', fontsize=8)
+        # Use self.shelf_x, self.shelf_y but keep the back edge on the 'wall' at y ~ 0.7
+        x_left = self.shelf_x - width / 2
+        x_right = self.shelf_x + width / 2
+        y_front = self.shelf_y
+        y_back = self.shelf_y + depth   # this will be ~0.70, touching the top boundary
 
-    def move_to(self, name):
-        target = self.targets[name]
-        print(f"Requested move to {name}: {target}")
-        # compute IK
-        q_target = self.robot.inverse_kinematics(target)
-        print("IK result:", q_target)
-        # animate trajectory
-        self._animate_to(q_target)
+        # Vertical posts (from floor to top shelf + bit)
+        z_top = self.shelf_levels[-1] + 0.05
+        for x_post in [x_left, x_right]:
+            self.ax.plot(
+                [x_post, x_post],
+                [y_front, y_front],
+                [0.0, z_top],
+                color="dimgray",
+                linewidth=3,
+            )
+            self.ax.plot(
+                [x_post, x_post],
+                [y_back, y_back],
+                [0.0, z_top],
+                color="dimgray",
+                linewidth=3,
+            )
 
-    def _animate_to(self, q_target, steps=80, pause=0.01):
-        q_start = self.q.copy()
-        for i in range(1, steps+1):
+        # Three shelf plates
+        colors = ["lightblue", "peachpuff", "lightgreen"]
+        for z, col in zip(self.shelf_levels, colors):
+            xx = np.array([[x_left, x_right], [x_left, x_right]])
+            yy = np.array([[y_front, y_front], [y_back, y_back]])
+            zz = np.array([[z, z], [z, z]])
+            self.ax.plot_surface(
+                xx, yy, zz,
+                color=col,
+                alpha=0.7,
+                edgecolor="k",
+                linewidth=0.4,
+            )
+
+        # Label shelves
+        for i, z in enumerate(self.shelf_levels, start=1):
+            self.ax.text(
+                x_right + 0.02,
+                y_back,
+                z + 0.02,
+                f"Shelf {i}",
+                fontsize=8,
+            )
+
+    def _create_objects(self):
+        """Create three floor objects at fixed positions."""
+        self.objects_pos = self.floor_positions.copy()
+        self.objects_scatters = []
+
+        colors = ["tab:blue", "tab:orange", "tab:green"]
+        for i, p in enumerate(self.objects_pos):
+            sc = self.ax.scatter(
+                p[0], p[1], p[2],
+                s=50, marker="s", color=colors[i]
+            )
+            self.objects_scatters.append(sc)
+            self.ax.text(p[0], p[1], p[2] + 0.03, f"O{i+1}", fontsize=8)
+
+    def _draw_home_reference(self):
+        ee_home = self.robot.forward_kinematics(self.q_home)[-1]
+        self.ax.scatter(
+            ee_home[0], ee_home[1], ee_home[2],
+            s=60, color="magenta", marker="o",
+        )
+        self.ax.text(
+            ee_home[0],
+            ee_home[1],
+            ee_home[2] + 0.03,
+            "Home ref",
+            color="magenta",
+            fontsize=8,
+        )
+
+    # ------------------------------------------------------------------
+    # Buttons
+    # ------------------------------------------------------------------
+    def _create_buttons(self):
+        # Only 4 buttons as requested
+        names = ["Floor 1", "Floor 2", "Floor 3", "Reset"]
+        self.buttons = {}
+        start_y = 0.75
+        dy = 0.08
+
+        for i, name in enumerate(names):
+            ax_btn = self.fig.add_axes([0.03, start_y - i * dy, 0.12, 0.06])
+            btn = Button(ax_btn, name)
+
+            if name == "Reset":
+                btn.on_clicked(lambda event: self.go_home())
+            else:
+                idx = int(name.split()[-1]) - 1  # Floor N -> index
+                btn.on_clicked(lambda event, k=idx: self.pick_and_place(k))
+
+            self.buttons[name] = btn
+
+    # ------------------------------------------------------------------
+    # Animation helper
+    # ------------------------------------------------------------------
+    def _animate_segment(self, q_target, steps=60, carry_index=None):
+        q_start = self.q_current.copy()
+        for i in range(steps + 1):
             alpha = i / steps
-            q_interp = (1-alpha) * q_start + alpha * q_target
-            # For robustness, clip d3 to allowed range
-            q_interp[2] = np.clip(q_interp[2], self.robot.d3_min, self.robot.d3_max)
-            self.q = q_interp
-            self.draw_scene()
-            plt.pause(pause)
-        # final set
-        self.q = q_target
-        self.draw_scene()
+            q = (1.0 - alpha) * q_start + alpha * q_target
+            joints = self.robot.forward_kinematics(q)
+
+            # Update robot line
+            self.robot_line.set_data(joints[:, 0], joints[:, 1])
+            self.robot_line.set_3d_properties(joints[:, 2])
+
+            # If carrying an object, move it with the end-effector
+            if carry_index is not None:
+                ee = joints[-1]
+                self.objects_pos[carry_index] = ee
+                sc = self.objects_scatters[carry_index]
+                sc._offsets3d = ([ee[0]], [ee[1]], [ee[2]])
+
+            plt.pause(0.01)
+
+        self.q_current = q_target.copy()
+
+    # ------------------------------------------------------------------
+    # Button actions
+    # ------------------------------------------------------------------
+    def pick_and_place(self, obj_idx: int):
+        """
+        Full sequence for one object:
+            - From current pose -> over object
+            - Lower to pick
+            - Lift
+            - Move over shelf
+            - Lower to place
+            - Leave object on shelf
+            - Back up to safe height
+        """
+
+        # If already placed, do nothing (object stays on shelf)
+        if self.object_done[obj_idx]:
+            return
+
+        pick_pos = self.floor_positions[obj_idx]
+        place_pos = self.shelf_positions[obj_idx]
+
+        safe_height = 0.75
+
+        # Pre-pick: above object
+        pre_pick = pick_pos.copy()
+        pre_pick[2] = safe_height
+        q_pre_pick = self.robot.inverse_kinematics(pre_pick)
+
+        # Pick: at floor
+        q_pick = self.robot.inverse_kinematics(pick_pos)
+
+        # Pre-place: above shelf
+        pre_place = place_pos.copy()
+        pre_place[2] = safe_height
+        q_pre_place = self.robot.inverse_kinematics(pre_place)
+
+        # Place: at shelf level
+        q_place = self.robot.inverse_kinematics(place_pos)
+
+        # Sequence with animation
+        self._animate_segment(q_pre_pick, steps=60)                    # move above object
+        self._animate_segment(q_pick, steps=40)                        # go down to object
+
+        # Attach object (carry)
+        carry = obj_idx
+        self._animate_segment(q_pre_pick, steps=40, carry_index=carry)   # lift
+        self._animate_segment(q_pre_place, steps=60, carry_index=carry)  # move above shelf
+        self._animate_segment(q_place, steps=40, carry_index=carry)      # down to shelf
+
+        # Detach: leave object on shelf (stop carrying)
+        self.objects_pos[carry] = place_pos
+        sc = self.objects_scatters[carry]
+        sc._offsets3d = ([place_pos[0]], [place_pos[1]], [place_pos[2]])
+
+        # Mark as done so it stays on shelf
+        self.object_done[carry] = True
+
+        # Move back up, not carrying
+        self._animate_segment(q_pre_place, steps=40, carry_index=None)
+
+    def go_home(self):
+        """Return to home configuration with animation."""
+        self._animate_segment(self.q_home, steps=60)
+
+    # ------------------------------------------------------------------
+    # Public entry
+    # ------------------------------------------------------------------
+    def start(self):
+        plt.show()
+
 
 def run():
-    sim = Simulator()
-    plt.show()
+    sim = ManipulatorSimulation()
+    sim.start()
+
 
 if __name__ == "__main__":
     run()
