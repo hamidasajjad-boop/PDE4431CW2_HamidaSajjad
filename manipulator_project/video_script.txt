@@ -1,20 +1,96 @@
-Hello — my name is Hamida Sajjad. This video demonstrates my PDE4431 CW2 manipulator simulation.
+Hello — my name is Hamida Sajjad, and this video demonstrates my PDE4431 Coursework 2 manipulator simulation.
 
-(Show project folder / README)
-This project simulates a 4-DoF articulated manipulator with joint order: revolute, revolute, prismatic, revolute — abbreviated RRPR.
+📁 Project Overview
 
-I used DH-style reasoning: two planar links provide x-y reach, a prismatic joint sets the vertical height, and a small wrist links the end-effector.
+This project simulates a 4-DoF articulated manipulator using Python, NumPy, and Matplotlib.
+The robot configuration follows the joint order:
 
-(Show code briefly)
-The robot class implements forward kinematics (for verification) and an inverse kinematics function that solves the 2-link planar IK, then sets the prismatic joint to reach the desired z.
+Revolute
 
-(Now run the demo)
-I will press each button on the left to instruct the robot to pick from the floor and place on three shelves.
+Revolute
 
-- Click Floor: the robot extends to the floor target.
-- Click Shelf 1: the prismatic joint raises the end-effector, and the arm moves to the first shelf at 0.4m.
-- Click Shelf 2: moves to the second shelf at 0.6m.
-- Click Shelf 3: moves to the highest shelf at 0.8m.
+Revolute
 
-(Discuss results)
-The program clamps unreachable positions and interpolates smoothly between poses. The code is on GitHub: [paste your repo link here]. Thank you.
+Prismatic
+
+This is sometimes called an RRRP manipulator.
+It provides horizontal reach through the revolute joints and vertical motion through the prismatic axis, allowing the arm to pick objects from the floor and place them onto multi-level shelves.
+
+🦾 Robot Model & Kinematics
+
+The robot class (ArticulatedRRRP) implements:
+
+Forward Kinematics (FK):
+Used to compute and visualize all joint positions.
+
+Inverse Kinematics (IK):
+The IK solves the 2-link planar geometry for x-y positioning,
+and sets the prismatic joint extension to reach the required z-level.
+
+The IK also includes reach clamping — whenever a target is outside the workspace, the solver automatically adjusts the position so the manipulator moves as close as physically possible.
+
+📂 Code & Structure
+
+The simulation consists of:
+
+A robot model file containing FK and IK
+
+A simulation file containing UI buttons, object logic, and animated motion
+
+A full 3D environment with a floor, objects, shelves, and a home position
+
+Smooth interpolation between poses for realistic motion
+
+▶️ Live Demonstration
+
+I will now run the simulation.
+
+On the left side of the window, there are interactive control buttons:
+
+Floor 1
+
+Floor 2
+
+Floor 3
+
+Reset
+
+Each floor button triggers a full pick-and-place sequence:
+
+The robot moves above the object,
+
+Lowers to pick it,
+
+Lifts up to a safe height,
+
+Moves toward the shelf,
+
+Lowers again,
+
+Releases the object,
+
+And returns upward.
+
+The vertical positioning comes from the prismatic joint, which adjusts to match each shelf’s height.
+
+My shelves in this simulation are placed at three levels, and each object is placed on its correct corresponding shelf.
+
+The entire animation uses smooth trajectory interpolation between IK solutions.
+
+📌 Results
+
+All three objects are picked correctly from the floor.
+
+Each object is placed on its designated shelf without teleporting or errors.
+
+The inverse kinematics correctly handles reachable and near-boundary targets.
+
+The simulation demonstrates stable RRRP kinematic behavior.
+
+📎 GitHub Repository
+
+The full source code, README, and documentation are available here:
+
+https://github.com/hamidasajjad-boop/PDE4431CW2_HamidaSajjad.git
+
+Thank you for watching.
