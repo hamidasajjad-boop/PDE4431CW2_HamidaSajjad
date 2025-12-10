@@ -71,4 +71,15 @@ The four buttons on the left of the simulation window perform:
 
 This project demonstrates RRRP manipulator kinematics, forward and inverse kinematics implementation, trajectory interpolation, and a complete animated pick-and-place sequence.
 
+## GitHub Repository
+
+https://github.com/hamidasajjad-boop/PDE4431CW2_HamidaSajjad.git
+
+
+
+## Youtube Link
+https://youtu.be/ccB4hTLdhYw
+
+
 ## The simulation is intended for PDE4431 Coursework 2.
+
